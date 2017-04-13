@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+
+<html lang="en-US">
+	<head>
+		<meta charset="utf-8">
+		<title>clown and farm simulator MMO</title>
+		<style>
+			* {
+				/* PIXELART - This is here to ensure that as many browser as possible do NOT smooth images as they are scaled up. */
+				image-rendering: optimizeSpeed;
+				image-rendering: -moz-crisp-edges;
+				image-rendering: -o-crisp-edges;
+				image-rendering: -webkit-optimize-contrast;
+				image-rendering: pixelated;
+				image-rendering: optimize-contrast;
+				-ms-interpolation-mode: nearest-neighbor;
+			}
+		
+			html, body {
+				background-color: #000;
+				color: #fff;
+				margin: 0; padding: 0;
+				top: 0; left: 0; right: 0; bottom: 0;
+				width: 100%; height: 100%;
+			}
+			
+			.more {
+				display: none;
+			}
+			:hover>span.more {
+				display: inline;
+			}
+			:hover>div.more {
+				display: block;
+			}
+			
+			#latencyDisplay {
+				position: fixed;
+				padding: 2px;
+				top: 0;
+				right: 0;
+				background-color: #000;
+				opacity: 0.75;
+			}
+			
+			#readme {
+				position: fixed;
+				top: 0;
+				left: 0;
+				z-index: 100;
+				pointer-events: none;
+			}
+			#readme>* {
+				margin: 0;
+				background-color: #000;
+				pointer-events: auto;
+			}
+			#readme>*:first-child {
+				display: inline-block;
+				padding: 1em;
+			}
+			#readme>*:first-child::first-letter {
+				color: red;
+			}
+			
+			#quickbar {
+				display: flex;
+				width: 100%;
+				
+				position: fixed;
+				bottom: 0;
+				left: 50%;
+				
+				transform:         translateX(-50%);
+				-webkit-transform: translateX(-50%);
+				-moz-transform:    translateX(-50%);
+				-ms-transform:     translateX(-50%);
+				
+				flex-wrap: wrap-reverse;
+				justify-content: center;
+				
+				pointer-events: none;
+			}
+			#quickbar>* {
+				background-color: #000;
+				opacity: 0.5;
+				margin: 4px;
+				width: 64px;
+				height: 64px;
+				cursor: pointer;
+				pointer-events: auto;
+			}
+			#quickbar>*:hover {
+				opacity: 0.75;
+			}
+			#quickbar>*.selected {
+				opacity: 1;
+			}
+			
+			/* fade out animation */
+			@keyframes fadeOut {
+				0% {opacity: 1; background-color: #fff; color: #000;}
+				0.49% {color: #000;}
+				0.5% {color: #fff;}
+				2% {opacity: 1; background-color: #000;}
+				100% {opacity: 0.6;}
+			}
+
+			/* The element to apply the animation to */
+			#chat {
+				position: fixed;
+				bottom: 0;
+				left: 0;
+			}
+			#chatLog {
+				width: 20ex;
+				resize: horizontal;
+				max-width: 100%; /* TODO: resize #chatLog if browser window ever gets smaller than #chatLog */
+				
+				overflow: auto;
+				word-wrap: break-word;
+			}
+			#chatLog>p>span {
+				background-color: #000;
+				pointer-events: auto;
+				
+				animation-name: fadeOut;
+				animation-duration: 120s;
+				animation-fill-mode: forwards;
+			}
+			#chatLog>*>span:first-child {
+				font-weight: bold;
+			}
+			#chatLog>*>span:first-child:after {
+				content: ": ";
+			}
+			
+			#mapWindow {
+				display: block;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+			}
+			
+			#mapCanvas {
+				position: relative;
+				display: block;
+			}
+			
+			/* make certain elements click-through */
+			.clickThrough {
+				pointer-events: none;
+			}
+			.clickable {
+				pointer-events: auto;
+			}
+			.noSelection {
+				-webkit-user-select: none;  /* Chrome all / Safari all */
+				-moz-user-select: none;     /* Firefox all */
+				-ms-user-select: none;      /* IE 10+ */
+				user-select: none;          /* Likely future */      
+			}
+			.center {
+				position: absolute;
+				top: 50%; left: 50%;
+				transform:         translate(-50%, -50%);
+				-webkit-transform: translate(-50%, -50%);
+				-moz-transform:    translate(-50%, -50%);
+				-ms-transform:     translate(-50%, -50%);
+			}
+		</style>
+		<script src="/socket.io/socket.io.js"></script>
+		<script>
+		var moveInterval
+		var socket
+		function init() {
+			// SOCKET STUFF
+			socket = io.connect()
+			ping()
+			
+			playerlist = {}
+			
+	// TRIGGERS START HERE
+			// Login
+			var loginForm = document.getElementById("loginForm")
+			var usernameInput = document.getElementById("usernameInput")
+			
+			loginForm.onsubmit = function() {
+				socket.emit("login", {username:usernameInput.value})
+				// TODO: Handle login error messages
+				return false
+			}
+			
+			// Chat
+			var chatLog = document.getElementById("chatLog")
+			var chatForm = document.getElementById("chatForm")
+			var chatInput = document.getElementById("chatInput")
+			
+			chatForm.onsubmit = function() {
+				console.log("submitting chat form")
+				// TODO: Add player name
+				var string = chatInput.value
+				if (string) {
+					socket.emit("chat", string)
+					logChat(myID, string)
+				}
+				chatInput.blur()
+				return false
+			}
+			
+			// socket.emit("login", {username:"Skasi"})
+			// TODO: Handle login error messages
+			
+			myID = ""
+			socket.on("ID", function(s) {
+				myID = s
+				console.log("My ID is:", myID)
+				
+				// Login successful, so loginForm can be removed
+				loginForm.remove()
+				
+				// TODO: MAKE STUFF HERE
+				/*var oldID = localStorage.getItem("ID", myID)
+				if (oldID) {
+					console.log("Found old ID:", oldID)
+				}*/
+			})
+			
+			window.onunload = function() {
+				localStorage.setItem("ID", myID)
+			}
+			
+			socket.on("move", function(data) {
+				playerlist[data.player].x = data.x
+				playerlist[data.player].y = data.y
+				playerlist[data.player].sx = data.sx
+				playerlist[data.player].sy = data.sy
+				playerlist[data.player].moveDate = data.moveDate
+				startMoveInterval()
+			})
+			socket.on("new player", function(player) {
+				playerlist[player.id] = player
+				if (player.id == myID) {
+					cameraTileX = player.x
+					cameraTileY = player.y
+				}
+				requestAnimationFrame(drawMap)
+			})
+			socket.on("disconnect", function(player) {
+				delete playerlist[player]
+				requestAnimationFrame(drawMap)
+			})
+			
+			socket.on("playerlist", function(data) {
+				playerlist = data
+				requestAnimationFrame(drawMap)
+			})
+			
+			socket.on("tile", function(data) {
+				tile[data.x][data.y] = data.tile
+				requestAnimationFrame(drawMap)
+			})
+			
+			socket.on("tiles", function(newTiles) {
+				console.log("newTiles received")
+				// update map tile on server
+				for (i in newTiles) {
+					var t = newTiles[i]
+					tile[t.x][t.y] = t.tile
+				}
+				requestAnimationFrame(drawMap)
+			})
+			
+			socket.on("map", function(data) {
+				tile = data
+				requestAnimationFrame(drawMap)
+			})
+			
+			socket.on("honk", function(oldTime) {
+				latencyDisplay.innerHTML = '<span class="more">Ping: </span>' + (Date.now() - oldTime) + "ms"
+			})
+			
+			function ping() {
+				socket.emit("hink", Date.now())
+			}
+			
+			socket.on("chat", function(chatData) {
+				console.log(chatData.username, chatData.message)
+				logChat(chatData.username, chatData.message)
+			})
+	// TRIGGERS END HERE
+			var lastMessageFrom
+			var lastMessageParagraph
+			function logChat(user, msg) {
+				var paragraph
+				
+				var msgString = document.createElement("span")
+				msgString.appendChild(document.createTextNode(msg))
+				
+				if (lastMessageFrom != user) {
+					lastMessageFrom = user
+					
+					var userString = document.createElement("span")
+					userString.appendChild(document.createTextNode(user))
+					
+					paragraph = document.createElement("p")
+					lastMessageParagraph = paragraph
+					paragraph.appendChild(userString)
+					chatLog.appendChild(paragraph)
+				}
+				else {
+					paragraph = lastMessageParagraph
+					paragraph.appendChild(document.createElement("br"))
+				}
+				
+				paragraph.appendChild(msgString)
+				chatInput.value = ""
+			}
+
+			
+			// PLAYER CLASS
+			function player(id, x, y) {
+				this.id = id
+				this.x = x
+				this.y = y
+			}
+		
+			
+			// Client game stuff
+			var body = document.body
+			var latencyDisplay = document.getElementById("latencyDisplay")
+			var bodyWidth    = body.clientWidth
+			var bodyHeight   = body.clientHeight
+			var screenCenterX = bodyWidth / 2
+			var screenCenterY = bodyHeight / 2
+			var tickrate = 60
+			
+			console.log("bodyWidth: " + bodyWidth + ", bodyHeight: " + bodyHeight)
+			
+			/* MAP RELATED CODE */
+			var mapCanvas = document.getElementById("mapCanvas")
+			var mapWindow = document.getElementById("mapWindow")
+			var context = mapCanvas.getContext("2d")
+			
+			var tileSize = 64
+			
+			// actual map generation
+			var tile = []
+			
+			// tile the camera (player) is currently standing on
+			var cameraTileX = 0
+			var cameraTileY = 0
+			var cameraSpeedX = 0
+			var cameraSpeedY = 0
+			//player.push({x:mapSize/2, y:mapSize/2})
+			
+			// output map tiles to visible screen
+			// by changing the visibility: style attribute
+			/*var oldStartX = 0
+			var oldEndX   = 0
+			var oldStartY = 0
+			var oldEndY   = 0*/
+			
+			// initialize graphics - whenever a graphic file is fully loaded, redraw map to show progress
+			var grassSprite    = new Image()
+			grassSprite.src    = "images/grass.png"
+			grassSprite.onload = function() {drawMap()}
+			
+			var plowedSprite    = new Image()
+			plowedSprite.src    = "images/plowed_soil.png"
+			plowedSprite.onload = function() {drawMap()}
+			
+			var plantSprite    = new Image()
+			plantSprite.src    = "images/plants.png"
+			plantSprite.onload = function() {drawMap()}
+			
+			var wateredSprite    = new Image()
+			wateredSprite.src    = "images/plowed_watered.png"
+			wateredSprite.onload = function() {drawMap()}
+			
+			var playerSprite    = new Image()
+			playerSprite.src    = "images/player.png"
+			playerSprite.onload = function() {drawMap()}
+			
+			function drawMap() {
+				// Exit map drawing if there is no map
+				if (!tile[0]) return
+				
+				// Clear canvas
+				// Theoretically obsolete because we draw over old stuff anyway..
+				// once we start moving the screen as we move and only redraw what's actually new, we might be able to use this on the edges
+				// However, we'll still keep it because we still don't deal with map edges and don't want them to switch from black to green.
+				context.clearRect(0, 0, mapCanvas.width, mapCanvas.height)
+			
+				var centerTileX = screenCenterX - tileSize / 2
+				var centerTileY = screenCenterY - tileSize / 2
+				var tilesLeftOfCenter = Math.ceil(centerTileX / tileSize)
+				var tilesTopOfCenter  = Math.ceil(centerTileY / tileSize)
+				var startX = Math.max(0, Math.round(cameraTileX - 0.5 - tilesLeftOfCenter))
+				var endX   = Math.min(tile.length, Math.round(cameraTileX + 1.5 + tilesLeftOfCenter))
+				var startY = Math.max(0, Math.round(cameraTileY - 0.5 - tilesTopOfCenter))
+				var endY   = Math.min(tile[0].length, Math.round(cameraTileY + 1.5 + tilesTopOfCenter))
+				
+				var drawLater = []
+				
+				for (var y = startY; y < endY; y++) {
+					for (var x = startX; x < endX; x++) {
+						// context.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)
+						
+						// img 		Source image object 			Sprite sheet
+						// sx 		Source x 						Frame index times frame width
+						// sy 		Source y 						0
+						// sw 		Source width 					Frame width
+						// sh 		Source height 					Frame height
+						// dx 		Destination x 					0
+						// dy 		Destination y 					0
+						// dw 		Destination width 			Frame width
+						// dh 		Destination height 			Frame height
+						
+						// TODO: do proper offset calculation
+						var posX = Math.floor(0.5 + centerTileX - cameraTileX * tileSize + x * tileSize)
+						var posY = Math.floor(0.5 + centerTileY - cameraTileY * tileSize + y * tileSize)
+						
+						//var posX = 0 * 64 + x * 64
+						//var posY = 0 * 64 + y * 64
+						
+						var tileType = tile[x][y].type
+						var watered = tile[x][y].watered
+						
+						if (tileType == "grass") {
+							context.drawImage(grassSprite, 1 * 32, 3 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						else if (tileType == "grass1") {
+							context.drawImage(grassSprite, 0 * 32, 5 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						else if (tileType == "grass2") {
+							context.drawImage(grassSprite, 1 * 32, 5 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						else if (tileType == "grass3") {
+							context.drawImage(grassSprite, 2 * 32, 5 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						else if (tileType == "plowed" && !watered) {
+							context.drawImage(plowedSprite, 0 * 32, 0 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						else if (tileType == "plowed" && watered) {
+							context.drawImage(wateredSprite, 0 * 32, 0 * 32, 32, 32, posX, posY, tileSize, tileSize)
+						}
+						
+						
+						var plant = tile[x][y].plant
+						
+						// Add plants to a queue that will be sorted and drawn later
+						if (plant) {
+							var plantType = plant.type
+							var plantAge = plant.age
+							
+							posY = posY - tileSize * 1.25
+							var zLevel = posY + tileSize * 1.87 // less than 2 to account for shadow
+							
+							if (plantType == "tomato") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 0 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+								//context.drawImage(plantSprite, 0 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2)
+							}
+							else if (plantType == "potato") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 1 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							else if (plantType == "carrot") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 2 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							else if (plantType == "cabbage") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 3 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							else if (plantType == "pepper") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 4 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							else if (plantType == "cucumber") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 5 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							else if (plantType == "maize") {
+								drawLater.push({z:zLevel, arguments:[plantSprite, 6 * 32, plantAge * 64, 32, 64, posX, posY, tileSize, tileSize * 2]})
+							}
+							
+							//context.beginPath()
+							//context.rect(posX, posY, 1, 1)
+							//context.fill()
+						}
+						//console.log(posX, posY)
+						//context.font = "14px Arial"
+						//var text = tile[x][y].type
+						//context.fillText(text, posX+2, posY+32)
+					}
+				}
+				
+				// DRAW PLAYERS
+				// Add players to a queue that will be sorted and drawn later
+				for (id in playerlist) {
+					if (playerlist.hasOwnProperty(id)) {
+						var posX = Math.floor(0.5 + centerTileX - cameraTileX * tileSize + (playerlist[id].x + 0.5) * tileSize) - tileSize/2
+						var posY = Math.floor(0.5 + centerTileY - cameraTileY * tileSize + (playerlist[id].y) * tileSize) - tileSize/2 // feet "center" on current location
+						
+						drawLater.push({z:posY + tileSize, arguments:[playerSprite, posX, posY, tileSize, tileSize]})
+					}
+				}
+				
+				// SORT AND DRAW z-level QUEUE
+				drawLater.sort(function(a, b) {
+					return a.z - b.z
+				})
+				for (var i = 0; i < drawLater.length; i++) {
+					context.drawImage.apply(context, drawLater[i].arguments)
+				}
+				
+				/*var startX = Math.max(0, Math.min(newStartX, oldStartX))
+				var startY = Math.max(0, Math.min(newStartY, oldStartY))
+				var endX   = Math.min(tile.length, Math.max(newEndX, oldEndX))
+				var endY   = Math.min(tile[0].length, Math.max(newEndY, oldEndY))*/
+				
+				/*console.log("startX: " + startX + ", startY: " + startY + ", endX: " + endX + ", endY: " + endY + "\n" +
+				            "newStartX: " + newStartX + ", newStartY: " + newStartY + ", newEndX: " + newEndX + ", newEndY: " + newEndY + "\n" +
+				            "oldStartX: " + oldStartX + ", oldStartY: " + oldStartY + ", oldEndX: " + oldEndX + ", oldEndY: " + oldEndY)*/
+				
+			}
+			
+			// update screen coordinate system data and redraw map to fill the screen
+			window.onresize = resize = function() {
+				bodyWidth    = body.clientWidth
+				bodyHeight   = body.clientHeight
+				screenCenterX = bodyWidth / 2
+				screenCenterY = bodyHeight / 2
+				console.log("bodyWidth: " + bodyWidth + ", bodyHeight: " + bodyHeight)
+				
+				// Set new canvas size
+				mapCanvas.width = bodyWidth
+				mapCanvas.height = bodyHeight
+				
+				// resize resets canvas, so context must be configurated again
+				context.webkitImageSmoothingEnabled = false
+				context.mozImageSmoothingEnabled = false
+				context.imageSmoothingEnabled = false
+				
+				drawMap()
+			}
+			resize()
+			
+			
+			// pingpong
+			setInterval(ping, 2000)
+			
+			
+			// speeds
+			var moveSpeed = 3
+			console.log("speed", moveSpeed)
+			var diagonal = Math.sqrt(2)/2
+			
+			function move() {
+				var movement = false
+				
+				for (id in playerlist) {
+					if (playerlist.hasOwnProperty(id)) {
+						var p = playerlist[id]
+						if (p.sx != 0 || p.sy != 0) {
+							movement = true
+							p.x += p.sx / tickrate
+							p.y += p.sy / tickrate
+							if (id == myID) {
+								cameraTileX = p.x
+								cameraTileY = p.y
+							}
+						}
+					}
+				}
+				
+				if (movement) {
+					requestAnimationFrame(drawMap)
+				}
+				else {
+					clearInterval(moveInterval)
+					moveInterval = null
+				}
+			}
+			
+			function startMovement(){
+				var vectorX = 0
+				var vectorY = 0
+				// NW
+				if ((keyUp && keyLeft) || keyLeftUp) {
+					vectorX -= moveSpeed * diagonal
+					vectorY -= moveSpeed * diagonal
+				}
+				// NE
+				if ((keyUp && keyRight) || keyRightUp) {
+					vectorX += moveSpeed * diagonal
+					vectorY -= moveSpeed * diagonal
+				}
+				// SW
+				if ((keyDown && keyLeft) || keyLeftDown) {
+					vectorX -= moveSpeed * diagonal
+					vectorY += moveSpeed * diagonal
+				}
+				// SE
+				if ((keyDown && keyRight) || keyRightDown) {
+					vectorX += moveSpeed * diagonal
+					vectorY += moveSpeed * diagonal
+				}
+				// N
+				if (keyUp) {
+					vectorY -= moveSpeed
+				}
+				// S
+				if (keyDown) {
+					vectorY += moveSpeed
+				}
+				// W
+				if (keyLeft) {
+					vectorX -= moveSpeed
+				}
+				// E
+				if (keyRight) {
+					vectorX += moveSpeed
+				}
+				
+				// normalize vector length
+				var length = Math.sqrt(Math.pow(vectorX, 2) + Math.pow(vectorY, 2))
+				//console.log("vectorX/Y", vectorX, vectorY)
+				//console.log("length", length)
+				if (length != 0) {
+					vectorX = vectorX / length * moveSpeed
+					vectorY = vectorY / length * moveSpeed
+				}
+				
+				// TODO: Add some sort of spectator camera-only movement independent of a player char
+				if (myID && (playerlist[myID].sx != vectorX || playerlist[myID].sy != vectorY)) {
+					playerlist[myID].sx = vectorX
+					playerlist[myID].sy = vectorY
+					console.log("changing velocity")
+					socket.emit("move", {x:cameraTileX, y:cameraTileY, sx:vectorX, sy:vectorY})
+				}
+			}
+			
+			// Keyboard input
+			// perpendicular keys
+			var keyUp    = false
+			var keyDown  = false
+			var keyLeft  = false
+			var keyRight = false
+			// diagonal keys
+			var keyLeftUp    = false
+			var keyRightUp   = false
+			var keyLeftDown  = false
+			var keyRightDown = false
+			
+			// uses onkeypress instead of onkeydown to prevent submit from firing immediately after chatInput.focus()
+			document.onkeypress = function (c){
+				// target: body
+				if (c.target == body) {
+					// focus chat
+					if (["Enter"].indexOf(c.key) >= 0 && c.target == body) {
+						chatInput.focus()
+					}
+					// movement
+					else if (["Home"].indexOf(c.key) >= 0) {
+						keyLeftUp = true
+					}
+					else if (["PageUp"].indexOf(c.key) >= 0) {
+						keyRightUp = true
+					}
+					else if (["End"].indexOf(c.key) >= 0) {
+						keyLeftDown = true
+					}
+					else if (["PageDown"].indexOf(c.key) >= 0) {
+						keyRightDown = true
+					}
+					else if (["w", "Up", "ArrowUp"].indexOf(c.key) >= 0) {
+						keyUp = true
+					}
+					else if (["s", "Down", "ArrowDown"].indexOf(c.key) >= 0) {
+						keyDown = true
+					}
+					else if (["a", "Left", "ArrowLeft"].indexOf(c.key) >= 0) {
+						keyLeft = true
+					}
+					else if (["d", "Right", "ArrowRight"].indexOf(c.key) >= 0) {
+						keyRight = true
+					}
+					// select inventory item
+					else if (!isNaN(c.key)) {
+						selectItem(c.key)
+					}
+					// log key if not used
+					else {
+						console.log(c)
+					}
+					
+					startMovement()
+					// Only call this when a MOVEMENT key is pressed and interval is not yet running
+					//if (keyLeftUp || keyRightUp || keyLeftDown || keyRightDown || keyUp || keyDown || keyLeft || keyRight) {
+						startMoveInterval()
+					//}
+				}
+			}
+			
+			document.onkeyup = function (c){
+				// move camera
+				if (["Home"].indexOf(c.key) >= 0) {
+					keyLeftUp = false
+				}
+				else if (["PageUp"].indexOf(c.key) >= 0) {
+					keyRightUp = false
+				}
+				else if (["End"].indexOf(c.key) >= 0) {
+					keyLeftDown = false
+				}
+				else if (["PageDown"].indexOf(c.key) >= 0) {
+					keyRightDown = false
+				}
+				else if (["w", "Up", "ArrowUp"].indexOf(c.key) >= 0) {
+					keyUp = false
+				}
+				else if (["s", "Down", "ArrowDown"].indexOf(c.key) >= 0) {
+					keyDown = false
+				}
+				else if (["a", "Left", "ArrowLeft"].indexOf(c.key) >= 0) {
+					keyLeft = false
+				}
+				else if (["d", "Right", "ArrowRight"].indexOf(c.key) >= 0) {
+					keyRight = false
+				}
+				else {
+					console.log(c)
+				}
+				
+				startMovement()
+				// Only call this when a MOVEMENT key is pressed and interval is not yet running
+				if (keyLeftUp || keyRightUp || keyLeftDown || keyRightDown || keyUp || keyDown || keyLeft || keyRight) {
+					startMoveInterval()
+				}
+			}
+			
+			function startMoveInterval() {
+				if (!moveInterval) {
+					moveInterval = setInterval(move, 1000 / tickrate)
+					//console.log("interval", 1000 / tickrate, "ms")
+				}
+			}
+			
+			
+			/*mapCanvas.onmousemove = function(e) {
+				quickbar.style.left = e.clientX + "px"
+				quickbar.style.top = e.clientY + "px"
+			}*/
+			
+			mapCanvas.onclick = function(e) {
+				var x = cameraTileX + 0.5 - (screenCenterX - e.clientX) / tileSize
+				var y = cameraTileY + 0.5 - (screenCenterY - e.clientY) / tileSize
+				//console.log("x = cameraTileX - (screenCenterX - e.clientX) / tileSize\n" +
+				//            x + " = " + cameraTileX + " - (" + screenCenterX + " - " + e.clientX + ") / " + tileSize)
+				
+				inventory[selectedItem].action(x, y)
+			}
+			
+			
+			/*document.onclick = function() {
+				inventory[selectedItem](this)
+			}*/
+			
+			// INVENTORY SYSTEM
+			var selectedItem = 0
+			var inventory = []
+			inventory.push({action:getTileInfo, name:"Inspect (debug tool)"})
+			inventory.push({action:plow, name:"Plow"})
+			inventory.push({action:water, name:"Water"})
+			inventory.push({action:plantGrass, name:"Plant Grass"})
+			inventory.push({action:plantTomato, name:"Plant Tomato"})
+			inventory.push({action:plantPotato, name:"Plant Potato"})
+			inventory.push({action:plantCarrot, name:"Plant Carrot"})
+			inventory.push({action:plantCabbage, name:"Plant Cabbage"})
+			inventory.push({action:plantPepper, name:"Plant Pepper"})
+			inventory.push({action:plantCucumber, name:"Plant Cucumber"})
+			inventory.push({action:plantMaize, name:"Plant Maize"})
+			inventory.push({action:sleep, name:"Sleep (grow plants)"})
+			//inventory.push({action:save, name:"Save map"})
+			//inventory.push({action:load, name:"Load map"})
+			
+			var quickbar = document.getElementById("quickbar")
+			var quickslot = []
+			
+			for (var i = 0; i < inventory.length; i++) {
+				var element = document.createElement("DIV")
+				element.innerHTML = i + "<br>" + inventory[i].name
+				element.addEventListener("click", selectItemFactory(i))
+				quickbar.appendChild(element)
+				quickslot[i] = element
+			}
+			quickslot[selectedItem].className = "selected"
+			
+			
+			function selectItemFactory(number) {
+				return function() {
+					selectItem(number)
+				}
+			}
+			
+			function selectItem(number) {
+				// if inventory slot is empty, select "default item" of slot 0
+				console.log("trying to selecting item", number)
+				quickslot[selectedItem].className = ""
+				if (inventory[number])
+					selectedItem = number
+				else
+					selectedItem = 0
+				quickslot[selectedItem].className = "selected"
+				console.log("Selected item: " + selectedItem)
+			}
+			
+			// ITEMS
+			function getTileInfo(x, y) {
+				console.log("Mouse - x:", x, "y:", y)
+				x = Math.floor(x)
+				y = Math.floor(y)
+				if (tile[x] && tile[x][y]) {
+					console.log(tile[x][y])
+				}
+			}
+			
+			function plow(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 ) {
+					tile[tileX][tileY].type = "plowed"
+					tile[tileX][tileY].plant = null
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function water(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].watered = true
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			
+			function plantGrass(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 ) {
+					tile[tileX][tileY].type = "grass"
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			
+			function plantTomato(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("tomato")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantPotato(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("potato")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantCarrot(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("carrot")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantCabbage(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("cabbage")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantPepper(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("pepper")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantCucumber(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("cucumber")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			function plantMaize(x, y) {
+				// check for maximum allowed distance without sqrt, possible because of block distance
+				var tileX = Math.floor(x)
+				var tileY = Math.floor(y)
+				if ((tileX - cameraTileX) <= 1.5 && 
+					 -(tileX - cameraTileX) < 1.5 &&
+					 (tileY - cameraTileY) <= 1.5 &&
+					 -(tileY - cameraTileY) < 1.5 &&
+					 tile[tileX][tileY].type == "plowed") {
+					tile[tileX][tileY].plant = new plant("maize")
+					requestAnimationFrame(drawMap)
+					socket.emit("tile", {x:tileX, y:tileY, tile:tile[tileX][tileY]})
+				}
+			}
+			
+			// TODO: Make sure harvested/dead plants are removed from plants[], then bring back plants[] and plants.push, etc.
+			//var plants = []
+			// PLANT CLASS
+			function plant(type) {
+				this.type = type
+				this.age = 0
+				this.maxAge = 3
+				//plants.push(this)
+			}
+			
+			// time-, day-, season updates and similar
+			function sleep() {
+				socket.emit("newDay")
+			}
+			
+			/*function save() {
+				var s = JSON.stringify(tile)
+				console.log(s)
+				localStorage.setItem("save", s)
+			}
+			function load() {
+				var s = JSON.parse(localStorage.getItem("save"))
+				tile = s
+				requestAnimationFrame(drawMap)
+			}*/
+		}
+		
+		
+		function containsClass(element, classChecked) {
+			return (" " + element.className + " ").indexOf(" " + classChecked + " ") > -1;
+		}
+		
+		// delay initialization until website HTML is loaded
+		window.onload = function() {
+			setTimeout(init, 0)
+		}
+	</script>
+	</head>
+	
+	<body>
+		<div id="mapWindow">
+			<canvas id="mapCanvas">
+			</canvas>
+		</div>
+		<div id="readme">
+			<span>✉ README</span>
+			<div class="more">
+				Most of the art was created by Daniel Eddeland.<br>
+				opengameart.org<br>
+				This art is dual licensed under the following licenses:<br>
+				*CC-BY-SA 3.0<br>
+				*GNU GPL 3.0 or later<br>
+				<br>
+				Clown stolen from ss13.<br>
+				<br>
+				Remember this is all still a very very early version<br>
+				and more a proof of concept and test environment<br>
+				than an actual playable game.<br>
+				<br>
+				Use WASD, Arrow keys or Numpad to walk<br>
+				Use Enter to chat
+			</div>
+		</div>
+		<!-- TODO: Is this necessary? Will people need it? Should probably go into a larger SETTINGS menu.
+		<div id="tilesize">
+			<span>TILE SIZE</span>
+			<a>32px</a>
+			<a>64px</a>
+			<a>92px</a>
+			<a>128px</a>
+		</div>
+		-->
+		<form id="loginForm" class="center">
+			<label for="username">Username:</label>
+			<input name="username" id="usernameInput" autofocus /><br>
+			<!--<input id="passwordInput" /><br>-->
+			<input type="checkbox" id="rememberLoginCheckbox" /><!--TODO-->
+			<input type="submit" value="Login">
+		</form>
+		<div id="quickbar">
+		</div>
+		<div id="latencyDisplay">
+		</div>
+		<div id="chat" class="clickThrough">
+			<div id="chatLog">
+			</div>
+			<form id="chatForm" class="clickable">
+				<input id="chatInput" placeholder="write a message.." />
+			</form>
+		</div>
+		
+	
+	
+	</body>
+</html>
